@@ -12,9 +12,10 @@ permissions:
 
 jobs:
   build:
-    runs-on: ubuntu-latest
+    # Pinned: ubuntu-latest moves to 26.04 in October 2026; upgrade on purpose
+    runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           submodules: true
 
@@ -33,7 +34,7 @@ jobs:
       - name: Render a frame
         # Headless snapshot from saved data: proves the dial draws, not just compiles
         run: >
-          ./build/even_flow_sim --config sim/battery.conf --date 2026-10-13 --time 16:40
+          ./build/even_flow_sim --config sim/example.conf --date 2026-10-13 --time 16:40
           --tide tests/data/noaa-tide-8518750-20261012-14.json
           --current tests/data/noaa-current-NYH1927-bin13-20261012-14.json
           --weather tests/data/open-meteo-battery-2026-10-13.json

@@ -70,8 +70,7 @@ The clock's settings are one `key=value` per line: place name, latitude and
 longitude, time zone, NOAA tide station, NOAA current station and depth bin,
 top hour, units (tide, temperature, wind), and `screens`, the knob order
 (e.g. `screens=tide,current,weather,sun,moon`; leave one out to hide it). See
-[sim/example.conf](sim/example.conf) (San Francisco), [sim/battery.conf](sim/battery.conf)
-(The Battery, NY) and [sim/scotia.conf](sim/scotia.conf) (inland, no tide). The simulator reads `--config FILE`,
+[sim/example.conf](sim/example.conf), set up for The Battery, NY. The simulator reads `--config FILE`,
 else `even-flow.conf` in the project root (gitignored, for your own location),
 else the example. The simulator watches the file and updates when it changes.
 
@@ -127,8 +126,8 @@ Currents have their own station (`current_station_id`) and depth bin
 shallowest is what a boat feels). Speeds are signed (flood +, ebb -), and
 directions are NOAA's mean set, where the water goes. Don't infer the current
 from the tide: at The Battery on 2026-10-13, slack came nearly four hours
-after high water. `sim/battery.conf` sets up The Battery with the Hudson River Entrance
-current.
+after high water. The example settings use The Battery with the Hudson River
+Entrance current.
 
 ## Sun and moon
 

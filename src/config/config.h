@@ -50,7 +50,7 @@ typedef struct {
     double longitude;     /* degrees east; NAN when unset */
     char tz_name[40];     /* IANA name for web APIs, e.g. "America/Los_Angeles" */
     char tz_posix[48];    /* POSIX TZ rule actually applied, e.g. "PST8PDT,M3.2.0,M11.1.0" */
-    char station_id[12];  /* NOAA CO-OPS station, e.g. "9414290"; empty when unset */
+    char station_id[12];  /* NOAA CO-OPS station, e.g. "8518750"; empty when unset */
     char station_name[48];
     char current_station_id[12];   /* NOAA current station, e.g. "NYH1927"; empty when unset */
     char current_station_name[48];
