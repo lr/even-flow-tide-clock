@@ -25,7 +25,7 @@ void current_build(current_day_t * day, const current_event_t * events, size_t c
         points[n].value = events[i].kind == CURRENT_SLACK ? 0.0f : events[i].speed_kt;
         n++;
     }
-    curve_fill_cosine(day->speed_kt, day->count, day->interval_min, points, n);
+    curve_fill_current(day->speed_kt, day->count, day->interval_min, points, n);
 
     for(uint16_t i = 0; i < day->count; i++) {
         if(fabsf(day->speed_kt[i]) > day->max_abs_kt) day->max_abs_kt = fabsf(day->speed_kt[i]);
