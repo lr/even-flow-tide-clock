@@ -39,7 +39,7 @@ more detail:
 | Current | slack circle mid-band; flood (teal) swells outward, ebb (violet) inward; darts at each maximum point where the water goes; maxima labelled with time and speed, slacks with time; rings at round speeds | "Ebb 1.9 kt, 183°", next slack | next two slacks or maxima |
 | Sun     | night, astronomical, nautical and civil twilight, daylight | sunrise and sunset | day length, civil twilight             |
 | Moon    | when the moon is up, plus a phase disc            | phase and percent lit   | moonrise, moonset, next quarter        |
-| Weather | sky by hour, rain chance bars, red rim for storms, an icon and temperature per 3 hours, dashed red wind line (further out = stronger, 0-30 kt) with arrowheads pointing downwind every 2 hours | icon, a short outlook ("Overcast, rain in 40 min"), temperature, wind | high and low, when rain starts or stops |
+| Weather | sky by hour, rain chance bars, red rim for storms, an icon and temperature per 3 hours, dashed red wind line (further out = stronger, 0-30 kt) with arrowheads pointing downwind every 2 hours and its speed labelled every 3 hours | icon, a short outlook ("Overcast, rain in 40 min"), temperature, wind | high and low, when rain starts or stops |
 
 Under the readout, each overlay names where its data comes from: the tide
 station on the tide overlay, the current station on the current overlay, and

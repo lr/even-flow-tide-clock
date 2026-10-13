@@ -73,7 +73,9 @@
 
 /* Weather band: rain-chance bars on the inside, conditions and icons outside */
 #define R_WX_RAIN_OUT     (R_BAND_IN + 30)
-#define R_WX_ICON         ((R_WX_RAIN_OUT + R_BAND_OUT) / 2.0f)
+#define R_WX_ICON         ((R_WX_RAIN_OUT + R_BAND_OUT) / 2.0f) /* icon and temperature, side by side */
+#define WX_ICON_TEMP_GAP  21.0f                  /* px from block centre to icon / temperature centre */
+#define R_WX_WIND_LABEL   (R_BAND_IN + 15.0f)    /* wind speed, near the low end of the wind line */
 #define R_WX_STORM_W      5
 #define COLOR_WIND        lv_color_hex(0xf0453a)
 #define COLOR_FLOOD       lv_color_hex(0x2bb3a0)
@@ -736,6 +738,8 @@ static void draw_wind(lv_layer_t * layer, const lv_area_t * coords, const weathe
 }
 
 static void format_temp(char * buf, size_t len, float temp_f, bool with_unit);
+static int wind_in_unit(float kt);
+static const char * wind_unit_name(void);
 
 /* Temperature at any minute, interpolated between hourly values */
 static float temp_at(const weather_t * wx, float minute)
@@ -748,6 +752,13 @@ static float temp_at(const weather_t * wx, float minute)
         }
     }
     return NAN;
+}
+
+/* Minutes along the ring that move a mark WX_ICON_TEMP_GAP px at the icon
+ * radius: icon one side of the block's centre, temperature the other */
+static float wx_side_offset(void)
+{
+    return WX_ICON_TEMP_GAP / (2.0f * (float)M_PI * R_WX_ICON) * MINUTES_PER_DAY;
 }
 
 static void weather_draw_cb(lv_event_t * e)
@@ -817,22 +828,31 @@ static void weather_draw_cb(lv_event_t * e)
         if(worst == NULL) continue;
         float mid = (float)(block * 180 + 90);
         draw_icon(layer, weather_icon(weather_kind(worst->code), is_night(mid), false),
-                  polar(&coords, mid, R_WX_ICON));
+                  polar(&coords, mid - wx_side_offset(), R_WX_ICON));
     }
 
     /* Current conditions above the time */
     /* Wind on top of the icons so its line stays continuous */
     draw_wind(layer, &coords, wx);
 
-    /* Temperature for each icon's 3 hours, just inside it, so the day's curve
-     * can be read around the dial */
+    /* For each icon's 3 hours: the temperature beside the icon (side by side
+     * works at every angle; stacked, they collide at 3 and 9 o'clock) and the
+     * wind speed further in, in the wind line's red. Both curves can then be
+     * read around the dial, and the temperature only meets the wind line in
+     * a near gale. */
     for(int block = 0; block < 8; block++) {
         float mid = (float)(block * 180 + 90);
+        char buf[16];
         float t = temp_at(wx, mid);
-        if(isnan(t)) continue;
-        char buf[12];
-        format_temp(buf, sizeof(buf), t, false);
-        draw_tag(layer, polar(&coords, mid, R_BAND_IN + 15.0f), buf, &lv_font_montserrat_14, COLOR_TEXT);
+        if(!isnan(t)) {
+            format_temp(buf, sizeof(buf), t, false);
+            draw_tag(layer, polar(&coords, mid + wx_side_offset(), R_WX_ICON), buf, &lv_font_montserrat_14, COLOR_TEXT);
+        }
+        float w = wind_at(wx, mid);
+        if(!isnan(w)) {
+            snprintf(buf, sizeof(buf), "%d %s", wind_in_unit(w), wind_unit_name());
+            draw_tag(layer, polar(&coords, mid, R_WX_WIND_LABEL), buf, &lv_font_montserrat_12, COLOR_WIND);
+        }
     }
 
     /* Same "now" as the readout's words, so icon and text agree */
