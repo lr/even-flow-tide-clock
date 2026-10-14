@@ -99,7 +99,12 @@
 #define WIND_CARET_EVERY  2 /* hours */
 #define COLOR_TEXT        lv_color_hex(0xe8eef4)
 #define COLOR_TEXT_DIM    lv_color_hex(0x7f93a8)
-#define COLOR_SCALE       lv_color_hex(0x2c4258) /* faint rings that give a band its scale */
+/* Scale rings: dashed white at half strength, labelled in plain white (no
+ * backing), so the scale reads as chart furniture and event labels stand out */
+#define COLOR_SCALE       lv_color_white()
+#define SCALE_OPA         LV_OPA_50
+#define SCALE_DASH_PX     5.0f
+#define SCALE_SPACE_PX    5.0f
 #define TAG_BG_OPA        LV_OPA_80              /* backing behind labels drawn over data */
 
 /*********************
@@ -265,19 +270,33 @@ static void draw_tag(lv_layer_t * layer, lv_point_precise_t center, const char *
     lv_draw_label(layer, &dsc, &area);
 }
 
-/* A faint full circle marking one value on a band's scale */
-static void draw_scale_ring(lv_layer_t * layer, const lv_area_t * coords, float r)
+static lv_point_t scale_text_size(const char * text)
 {
-    lv_draw_arc_dsc_t arc;
-    lv_draw_arc_dsc_init(&arc);
-    arc.center.x = coords->x1 + DIAL_SIZE / 2;
-    arc.center.y = coords->y1 + DIAL_SIZE / 2;
-    arc.radius = (uint16_t)lroundf(r);
-    arc.width = 1;
-    arc.start_angle = 0;
-    arc.end_angle = 360;
-    arc.color = COLOR_SCALE;
-    lv_draw_arc(layer, &arc);
+    lv_point_t size;
+    lv_text_get_size(&size, text, &lv_font_montserrat_12, 0, 0, LV_COORD_MAX, LV_TEXT_FLAG_NONE);
+    return size;
+}
+
+/* A dashed circle marking one value on a band's scale, with a gap at
+ * `label_minute` for its label, the way contour heights sit on a chart.
+ * Dashes are short chords, which is indistinguishable from an arc at 5 px. */
+static void draw_scale_ring(lv_layer_t * layer, const lv_area_t * coords, float r, float label_minute,
+                            const char * label)
+{
+    float circumference = 2.0f * (float)M_PI * r;
+    float minutes_per_px = MINUTES_PER_DAY / circumference;
+    float gap = (float)scale_text_size(label).x + 8.0f; /* labels sit across the circle (top or bottom) */
+
+    lv_draw_line_dsc_t line;
+    lv_draw_line_dsc_init(&line);
+    line.color = COLOR_SCALE;
+    line.opa = SCALE_OPA;
+    line.width = 1;
+    for(float s = gap / 2.0f; s + SCALE_DASH_PX <= circumference - gap / 2.0f; s += SCALE_DASH_PX + SCALE_SPACE_PX) {
+        line.p1 = polar(coords, label_minute + s * minutes_per_px, r);
+        line.p2 = polar(coords, label_minute + (s + SCALE_DASH_PX) * minutes_per_px, r);
+        lv_draw_line(layer, &line);
+    }
 }
 
 /* Where to stack scale labels: straight up or straight down from the centre
@@ -302,10 +321,23 @@ static float quiet_minute(const float * busy, int n)
     return best;
 }
 
-static void draw_scale_label(lv_layer_t * layer, const lv_area_t * coords, float minute, float r,
-                             const char * text, lv_color_t color)
+/* A scale value in plain white, centred in its ring's gap */
+static void draw_scale_label(lv_layer_t * layer, const lv_area_t * coords, float minute, float r, const char * text)
 {
-    draw_tag(layer, polar(coords, minute, r), text, &lv_font_montserrat_12, color);
+    lv_point_t size = scale_text_size(text);
+    lv_point_precise_t c = polar(coords, minute, r);
+    int32_t x = (int32_t)lroundf(c.x) - size.x / 2;
+    int32_t y = (int32_t)lroundf(c.y) - size.y / 2;
+
+    lv_draw_label_dsc_t dsc;
+    lv_draw_label_dsc_init(&dsc);
+    dsc.text = text;
+    dsc.text_local = 1;
+    dsc.font = &lv_font_montserrat_12;
+    dsc.color = lv_color_white();
+    dsc.align = LV_TEXT_ALIGN_CENTER;
+    lv_area_t area = {x, y, x + size.x - 1, y + size.y - 1};
+    lv_draw_label(layer, &dsc, &area);
 }
 
 /* "2", "2.5" or "-0.5": as many decimals as the step needs, at most one */
@@ -410,6 +442,14 @@ static void face_draw_cb(lv_event_t * e)
 /*********************
  *  TIDE LAYER
  *********************/
+/* "2 ft", "0.5 m" */
+static void tide_scale_text(char * buf, size_t len, float v, float step)
+{
+    char val[12];
+    format_scale_value(val, sizeof(val), v, step);
+    snprintf(buf, len, "%s %s", val, dial.metric ? "m" : "ft");
+}
+
 static void tide_draw_cb(lv_event_t * e)
 {
     const tide_day_t * day = dial.tide;
@@ -442,12 +482,20 @@ static void tide_draw_cb(lv_event_t * e)
         lv_draw_line(layer, &line);
     }
 
-    /* Height scale: rings at round heights in the display unit */
+    /* Height scale: rings at round heights in the display unit, each with a
+     * gap for its label where no event is */
     float unit = dial.metric ? 0.3048f : 1.0f;
     float lo = day->min_ft * unit, hi = day->max_ft * unit;
     float step = curve_nice_step(hi - lo, 4);
+    float busy[TIDE_MAX_EVENTS];
+    for(uint8_t i = 0; i < day->event_count; i++) busy[i] = day->events[i].minute;
+    float label_at = quiet_minute(busy, day->event_count);
     if(step > 0.0f) {
-        for(float v = ceilf(lo / step) * step; v <= hi + 1e-3f; v += step) draw_scale_ring(layer, &coords, tide_radius(day, v / unit));
+        for(float v = ceilf(lo / step) * step; v <= hi + 1e-3f; v += step) {
+            char buf[16];
+            tide_scale_text(buf, sizeof(buf), v, step);
+            draw_scale_ring(layer, &coords, tide_radius(day, v / unit), label_at, buf);
+        }
     }
 
     /* Water line on top of the fill */
@@ -474,15 +522,11 @@ static void tide_draw_cb(lv_event_t * e)
     /* Labels last, over everything. Scale values where no event is, then each
      * high (inside the water, clear of the numerals) and low (above the
      * water, where the band is empty) with its time and height. */
-    float busy[TIDE_MAX_EVENTS];
-    for(uint8_t i = 0; i < day->event_count; i++) busy[i] = day->events[i].minute;
-    float label_at = quiet_minute(busy, day->event_count);
     if(step > 0.0f) {
         for(float v = ceilf(lo / step) * step; v <= hi + 1e-3f; v += step) {
-            char buf[16], val[12];
-            format_scale_value(val, sizeof(val), v, step);
-            snprintf(buf, sizeof(buf), "%s %s", val, dial.metric ? "m" : "ft");
-            draw_scale_label(layer, &coords, label_at, tide_radius(day, v / unit), buf, COLOR_TEXT_DIM);
+            char buf[16];
+            tide_scale_text(buf, sizeof(buf), v, step);
+            draw_scale_label(layer, &coords, label_at, tide_radius(day, v / unit), buf);
         }
     }
     for(uint8_t i = 0; i < day->event_count; i++) {
@@ -879,6 +923,14 @@ static float current_radius(const current_day_t * c, float kt)
     return R_SLACK + f * R_CURRENT_SWING;
 }
 
+/* "1", "2 kt": the unit only on the outermost ring each side, to keep the stack narrow */
+static void current_scale_text(char * buf, size_t len, float v, float step, float scale)
+{
+    char val[12];
+    format_scale_value(val, sizeof(val), v, step);
+    snprintf(buf, len, v + step > scale + 1e-3f ? "%s kt" : "%s", val);
+}
+
 static void current_draw_cb(lv_event_t * e)
 {
     const current_day_t * c = dial.current;
@@ -909,13 +961,19 @@ static void current_draw_cb(lv_event_t * e)
         lv_draw_line(layer, &line);
     }
 
-    /* Speed scale: rings at round speeds on both sides of slack */
+    /* Speed scale: rings at round speeds on both sides of slack, each with a
+     * gap for its label where no event is */
     float scale = current_scale(c);
     float step = curve_nice_step(scale, 3);
+    float busy[CURRENT_MAX_EVENTS];
+    for(uint8_t i = 0; i < c->event_count; i++) busy[i] = c->events[i].minute;
+    float label_at = quiet_minute(busy, c->event_count);
     if(step > 0.0f) {
         for(float v = step; v <= scale + 1e-3f; v += step) {
-            draw_scale_ring(layer, &coords, current_radius(c, v));
-            draw_scale_ring(layer, &coords, current_radius(c, -v));
+            char buf[16];
+            current_scale_text(buf, sizeof(buf), v, step, scale);
+            draw_scale_ring(layer, &coords, current_radius(c, v), label_at, buf);
+            draw_scale_ring(layer, &coords, current_radius(c, -v), label_at, buf);
         }
     }
 
@@ -960,17 +1018,12 @@ static void current_draw_cb(lv_event_t * e)
     /* Labels last. Scale where no event is (flood outward, ebb inward), then
      * each maximum with its time and speed, inside its own bulge, and each
      * slack with its time just off the slack circle. */
-    float busy[CURRENT_MAX_EVENTS];
-    for(uint8_t i = 0; i < c->event_count; i++) busy[i] = c->events[i].minute;
-    float label_at = quiet_minute(busy, c->event_count);
     if(step > 0.0f) {
         for(float v = step; v <= scale + 1e-3f; v += step) {
-            /* Unit only on the outermost ring each side, to keep the stack narrow */
-            char val[12], buf[16];
-            format_scale_value(val, sizeof(val), v, step);
-            snprintf(buf, sizeof(buf), v + step > scale + 1e-3f ? "%s kt" : "%s", val);
-            draw_scale_label(layer, &coords, label_at, current_radius(c, v), buf, COLOR_FLOOD_DART);
-            draw_scale_label(layer, &coords, label_at, current_radius(c, -v), buf, COLOR_EBB_DART);
+            char buf[16];
+            current_scale_text(buf, sizeof(buf), v, step, scale);
+            draw_scale_label(layer, &coords, label_at, current_radius(c, v), buf);
+            draw_scale_label(layer, &coords, label_at, current_radius(c, -v), buf);
         }
     }
     for(uint8_t i = 0; i < c->event_count; i++) {

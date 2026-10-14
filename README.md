@@ -46,9 +46,12 @@ station on the tide overlay, the current station on the current overlay, and
 the configured place on the others (or its coordinates, if it has no name).
 These differ when the nearest good station isn't at your doorstep.
 
-Tide and current bands have a scale: faint rings at round values (1, 2, 2.5 or
-5 times a power of ten), labelled in a vertical stack straight up or straight
-down from the center, whichever is further from the day's events.
+Tide and current bands have a scale: dashed white rings at round values (1, 2,
+2.5 or 5 times a power of ten). Each value is written in plain white in a gap
+in its own ring, like contour heights on a chart, so the scale reads
+differently from the event labels (which have a dark backing). The values
+stack straight up or straight down from the center, whichever is further from
+the day's events.
 
 Options:
 
