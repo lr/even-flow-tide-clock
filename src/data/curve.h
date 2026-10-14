@@ -22,6 +22,22 @@ typedef struct {
 void curve_fill_cosine(float * samples, uint16_t count, uint16_t interval, const curve_point_t * points,
                        size_t n);
 
+/**
+ * Like curve_fill_cosine(), for tidal current: points alternate between slack
+ * (value 0) and maxima. Speed changes fastest at slack and is flat at a
+ * maximum, so slack-to-max is a quarter sine and max-to-slack a quarter
+ * cosine. (A half cosine is flat at both ends, which is right for tide highs
+ * and lows but makes the current lag after every slack.)
+ */
+void curve_fill_current(float * samples, uint16_t count, uint16_t interval, const curve_point_t * points,
+                        size_t n);
+
+/**
+ * A round interval for scale lines (1, 2, 2.5 or 5 times a power of ten) that
+ * splits `range` into at most `max_lines` steps. Returns 0 for an empty range.
+ */
+float curve_nice_step(float range, int max_lines);
+
 /** Linear interpolation into samples made by curve_fill_cosine(), clamped at the ends. */
 float curve_sample_at(const float * samples, uint16_t count, uint16_t interval, float minute);
 

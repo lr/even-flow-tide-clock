@@ -15,6 +15,7 @@
  * way it crosses the sky.
  */
 #include "dial.h"
+#include "../data/curve.h"
 #include "setup_card.h"
 #include "weather_icons.h"
 
@@ -72,7 +73,9 @@
 
 /* Weather band: rain-chance bars on the inside, conditions and icons outside */
 #define R_WX_RAIN_OUT     (R_BAND_IN + 30)
-#define R_WX_ICON         ((R_WX_RAIN_OUT + R_BAND_OUT) / 2.0f)
+#define R_WX_ICON         ((R_WX_RAIN_OUT + R_BAND_OUT) / 2.0f) /* icon and temperature, side by side */
+#define WX_ICON_TEMP_GAP  21.0f                  /* px from block centre to icon / temperature centre */
+#define R_WX_WIND_LABEL   (R_BAND_IN + 15.0f)    /* wind speed, near the low end of the wind line */
 #define R_WX_STORM_W      5
 #define COLOR_WIND        lv_color_hex(0xf0453a)
 #define COLOR_FLOOD       lv_color_hex(0x2bb3a0)
@@ -96,6 +99,13 @@
 #define WIND_CARET_EVERY  2 /* hours */
 #define COLOR_TEXT        lv_color_hex(0xe8eef4)
 #define COLOR_TEXT_DIM    lv_color_hex(0x7f93a8)
+/* Scale rings: dashed white at half strength, labelled in plain white (no
+ * backing), so the scale reads as chart furniture and event labels stand out */
+#define COLOR_SCALE       lv_color_white()
+#define SCALE_OPA         LV_OPA_50
+#define SCALE_DASH_PX     5.0f
+#define SCALE_SPACE_PX    5.0f
+#define TAG_BG_OPA        LV_OPA_80              /* backing behind labels drawn over data */
 
 /*********************
  *  STATE
@@ -231,6 +241,116 @@ static void draw_dot(lv_layer_t * layer, lv_point_precise_t c, int32_t r, lv_col
     lv_draw_rect(layer, &dsc, &area);
 }
 
+/* Text on a small dark backing, so it stays legible over fills and lines.
+ * Multi-line text is centred line by line. */
+static void draw_tag(lv_layer_t * layer, lv_point_precise_t center, const char * text, const lv_font_t * font,
+                     lv_color_t color)
+{
+    lv_point_t size;
+    lv_text_get_size(&size, text, font, 0, 0, LV_COORD_MAX, LV_TEXT_FLAG_NONE);
+    int32_t x = (int32_t)lroundf(center.x) - size.x / 2;
+    int32_t y = (int32_t)lroundf(center.y) - size.y / 2;
+
+    lv_draw_rect_dsc_t bg;
+    lv_draw_rect_dsc_init(&bg);
+    bg.bg_color = COLOR_FACE;
+    bg.bg_opa = TAG_BG_OPA;
+    bg.radius = 4;
+    lv_area_t box = {x - 3, y - 1, x + size.x + 2, y + size.y};
+    lv_draw_rect(layer, &bg, &box);
+
+    lv_draw_label_dsc_t dsc;
+    lv_draw_label_dsc_init(&dsc);
+    dsc.text = text;
+    dsc.text_local = 1;
+    dsc.font = font;
+    dsc.color = color;
+    dsc.align = LV_TEXT_ALIGN_CENTER;
+    lv_area_t area = {x, y, x + size.x - 1, y + size.y - 1};
+    lv_draw_label(layer, &dsc, &area);
+}
+
+static lv_point_t scale_text_size(const char * text)
+{
+    lv_point_t size;
+    lv_text_get_size(&size, text, &lv_font_montserrat_12, 0, 0, LV_COORD_MAX, LV_TEXT_FLAG_NONE);
+    return size;
+}
+
+/* A dashed circle marking one value on a band's scale, with a gap at
+ * `label_minute` for its label, the way contour heights sit on a chart.
+ * Dashes are short chords, which is indistinguishable from an arc at 5 px. */
+static void draw_scale_ring(lv_layer_t * layer, const lv_area_t * coords, float r, float label_minute,
+                            const char * label)
+{
+    float circumference = 2.0f * (float)M_PI * r;
+    float minutes_per_px = MINUTES_PER_DAY / circumference;
+    float gap = (float)scale_text_size(label).x + 8.0f; /* labels sit across the circle (top or bottom) */
+
+    lv_draw_line_dsc_t line;
+    lv_draw_line_dsc_init(&line);
+    line.color = COLOR_SCALE;
+    line.opa = SCALE_OPA;
+    line.width = 1;
+    for(float s = gap / 2.0f; s + SCALE_DASH_PX <= circumference - gap / 2.0f; s += SCALE_DASH_PX + SCALE_SPACE_PX) {
+        line.p1 = polar(coords, label_minute + s * minutes_per_px, r);
+        line.p2 = polar(coords, label_minute + (s + SCALE_DASH_PX) * minutes_per_px, r);
+        lv_draw_line(layer, &line);
+    }
+}
+
+/* Where to stack scale labels: straight up or straight down from the centre
+ * (the only directions where labels a ring apart don't overlap sideways),
+ * whichever is further from the day's events (`busy`, in minutes). Events
+ * don't move during the day, so neither do the labels. */
+static float quiet_minute(const float * busy, int n)
+{
+    float best = dial.top_hour * 60.0f, best_gap = -1.0f;
+    for(int k = 0; k < 2; k++) {
+        float m = fmodf((dial.top_hour + 12 * k) * 60.0f, MINUTES_PER_DAY), gap = MINUTES_PER_DAY;
+        for(int i = 0; i < n; i++) {
+            float d = fabsf(fmodf(m - busy[i] + MINUTES_PER_DAY * 2, MINUTES_PER_DAY));
+            if(d > MINUTES_PER_DAY / 2) d = MINUTES_PER_DAY - d;
+            if(d < gap) gap = d;
+        }
+        if(gap > best_gap) {
+            best_gap = gap;
+            best = m;
+        }
+    }
+    return best;
+}
+
+/* A scale value in plain white, centred in its ring's gap */
+static void draw_scale_label(lv_layer_t * layer, const lv_area_t * coords, float minute, float r, const char * text)
+{
+    lv_point_t size = scale_text_size(text);
+    lv_point_precise_t c = polar(coords, minute, r);
+    int32_t x = (int32_t)lroundf(c.x) - size.x / 2;
+    int32_t y = (int32_t)lroundf(c.y) - size.y / 2;
+
+    lv_draw_label_dsc_t dsc;
+    lv_draw_label_dsc_init(&dsc);
+    dsc.text = text;
+    dsc.text_local = 1;
+    dsc.font = &lv_font_montserrat_12;
+    dsc.color = lv_color_white();
+    dsc.align = LV_TEXT_ALIGN_CENTER;
+    lv_area_t area = {x, y, x + size.x - 1, y + size.y - 1};
+    lv_draw_label(layer, &dsc, &area);
+}
+
+/* "2", "2.5" or "-0.5": as many decimals as the step needs, at most one */
+static void format_scale_value(char * buf, size_t len, float v, float step)
+{
+    int tenths = (int)lroundf(v * 10.0f);
+    const char * sign = tenths < 0 ? "-" : "";
+    if(tenths < 0) tenths = -tenths;
+    bool whole = fmodf(step, 1.0f) == 0.0f || tenths % 10 == 0;
+    if(whole) snprintf(buf, len, "%s%d", sign, (tenths + 5) / 10);
+    else snprintf(buf, len, "%s%d.%d", sign, tenths / 10, tenths % 10);
+}
+
 /* Fill the overlay band between two times of day */
 static void draw_band(lv_layer_t * layer, const lv_area_t * coords, float start, float end, lv_color_t color)
 {
@@ -322,6 +442,14 @@ static void face_draw_cb(lv_event_t * e)
 /*********************
  *  TIDE LAYER
  *********************/
+/* "2 ft", "0.5 m" */
+static void tide_scale_text(char * buf, size_t len, float v, float step)
+{
+    char val[12];
+    format_scale_value(val, sizeof(val), v, step);
+    snprintf(buf, len, "%s %s", val, dial.metric ? "m" : "ft");
+}
+
 static void tide_draw_cb(lv_event_t * e)
 {
     const tide_day_t * day = dial.tide;
@@ -354,6 +482,22 @@ static void tide_draw_cb(lv_event_t * e)
         lv_draw_line(layer, &line);
     }
 
+    /* Height scale: rings at round heights in the display unit, each with a
+     * gap for its label where no event is */
+    float unit = dial.metric ? 0.3048f : 1.0f;
+    float lo = day->min_ft * unit, hi = day->max_ft * unit;
+    float step = curve_nice_step(hi - lo, 4);
+    float busy[TIDE_MAX_EVENTS];
+    for(uint8_t i = 0; i < day->event_count; i++) busy[i] = day->events[i].minute;
+    float label_at = quiet_minute(busy, day->event_count);
+    if(step > 0.0f) {
+        for(float v = ceilf(lo / step) * step; v <= hi + 1e-3f; v += step) {
+            char buf[16];
+            tide_scale_text(buf, sizeof(buf), v, step);
+            draw_scale_ring(layer, &coords, tide_radius(day, v / unit), label_at, buf);
+        }
+    }
+
     /* Water line on top of the fill */
     line.color = COLOR_TIDE_LINE;
     line.width = 2;
@@ -374,6 +518,26 @@ static void tide_draw_cb(lv_event_t * e)
 
     /* Where the hand meets the water */
     draw_dot(layer, polar(&coords, now, tide_radius(day, tide_height_at(day, now))), 6, COLOR_HAND);
+
+    /* Labels last, over everything. Scale values where no event is, then each
+     * high (inside the water, clear of the numerals) and low (above the
+     * water, where the band is empty) with its time and height. */
+    if(step > 0.0f) {
+        for(float v = ceilf(lo / step) * step; v <= hi + 1e-3f; v += step) {
+            char buf[16];
+            tide_scale_text(buf, sizeof(buf), v, step);
+            draw_scale_label(layer, &coords, label_at, tide_radius(day, v / unit), buf);
+        }
+    }
+    for(uint8_t i = 0; i < day->event_count; i++) {
+        const tide_event_t * ev = &day->events[i];
+        char t[8], h[16], buf[32];
+        format_hhmm(t, sizeof(t), ev->minute);
+        format_height(h, sizeof(h), ev->height_ft);
+        snprintf(buf, sizeof(buf), "%s\n%s", t, h);
+        float r = tide_radius(day, ev->height_ft) + (ev->high ? -22.0f : 22.0f);
+        draw_tag(layer, polar(&coords, ev->minute, r), buf, &lv_font_montserrat_12, ev->high ? COLOR_HIGH : COLOR_TEXT);
+    }
 }
 
 /*********************
@@ -617,6 +781,30 @@ static void draw_wind(lv_layer_t * layer, const lv_area_t * coords, const weathe
     }
 }
 
+static void format_temp(char * buf, size_t len, float temp_f, bool with_unit);
+static int wind_in_unit(float kt);
+static const char * wind_unit_name(void);
+
+/* Temperature at any minute, interpolated between hourly values */
+static float temp_at(const weather_t * wx, float minute)
+{
+    for(uint8_t i = 0; i + 1 < wx->hour_count; i++) {
+        const weather_hour_t * a = &wx->hours[i];
+        const weather_hour_t * b = &wx->hours[i + 1];
+        if(minute >= a->minute && minute <= b->minute) {
+            return a->temp_f + (b->temp_f - a->temp_f) * (minute - a->minute) / (b->minute - a->minute);
+        }
+    }
+    return NAN;
+}
+
+/* Minutes along the ring that move a mark WX_ICON_TEMP_GAP px at the icon
+ * radius: icon one side of the block's centre, temperature the other */
+static float wx_side_offset(void)
+{
+    return WX_ICON_TEMP_GAP / (2.0f * (float)M_PI * R_WX_ICON) * MINUTES_PER_DAY;
+}
+
 static void weather_draw_cb(lv_event_t * e)
 {
     lv_obj_t * obj = lv_event_get_target_obj(e);
@@ -684,12 +872,32 @@ static void weather_draw_cb(lv_event_t * e)
         if(worst == NULL) continue;
         float mid = (float)(block * 180 + 90);
         draw_icon(layer, weather_icon(weather_kind(worst->code), is_night(mid), false),
-                  polar(&coords, mid, R_WX_ICON));
+                  polar(&coords, mid - wx_side_offset(), R_WX_ICON));
     }
 
     /* Current conditions above the time */
     /* Wind on top of the icons so its line stays continuous */
     draw_wind(layer, &coords, wx);
+
+    /* For each icon's 3 hours: the temperature beside the icon (side by side
+     * works at every angle; stacked, they collide at 3 and 9 o'clock) and the
+     * wind speed further in, in the wind line's red. Both curves can then be
+     * read around the dial, and the temperature only meets the wind line in
+     * a near gale. */
+    for(int block = 0; block < 8; block++) {
+        float mid = (float)(block * 180 + 90);
+        char buf[16];
+        float t = temp_at(wx, mid);
+        if(!isnan(t)) {
+            format_temp(buf, sizeof(buf), t, false);
+            draw_tag(layer, polar(&coords, mid + wx_side_offset(), R_WX_ICON), buf, &lv_font_montserrat_14, COLOR_TEXT);
+        }
+        float w = wind_at(wx, mid);
+        if(!isnan(w)) {
+            snprintf(buf, sizeof(buf), "%d %s", wind_in_unit(w), wind_unit_name());
+            draw_tag(layer, polar(&coords, mid, R_WX_WIND_LABEL), buf, &lv_font_montserrat_12, COLOR_WIND);
+        }
+    }
 
     /* Same "now" as the readout's words, so icon and text agree */
     float now = (float)dial.minute_of_day;
@@ -713,6 +921,14 @@ static float current_radius(const current_day_t * c, float kt)
     if(f > 1.0f) f = 1.0f;
     if(f < -1.0f) f = -1.0f;
     return R_SLACK + f * R_CURRENT_SWING;
+}
+
+/* "1", "2 kt": the unit only on the outermost ring each side, to keep the stack narrow */
+static void current_scale_text(char * buf, size_t len, float v, float step, float scale)
+{
+    char val[12];
+    format_scale_value(val, sizeof(val), v, step);
+    snprintf(buf, len, v + step > scale + 1e-3f ? "%s kt" : "%s", val);
 }
 
 static void current_draw_cb(lv_event_t * e)
@@ -743,6 +959,22 @@ static void current_draw_cb(lv_event_t * e)
         line.p1 = polar(&coords, m, R_SLACK);
         line.p2 = polar(&coords, m, r_end);
         lv_draw_line(layer, &line);
+    }
+
+    /* Speed scale: rings at round speeds on both sides of slack, each with a
+     * gap for its label where no event is */
+    float scale = current_scale(c);
+    float step = curve_nice_step(scale, 3);
+    float busy[CURRENT_MAX_EVENTS];
+    for(uint8_t i = 0; i < c->event_count; i++) busy[i] = c->events[i].minute;
+    float label_at = quiet_minute(busy, c->event_count);
+    if(step > 0.0f) {
+        for(float v = step; v <= scale + 1e-3f; v += step) {
+            char buf[16];
+            current_scale_text(buf, sizeof(buf), v, step, scale);
+            draw_scale_ring(layer, &coords, current_radius(c, v), label_at, buf);
+            draw_scale_ring(layer, &coords, current_radius(c, -v), label_at, buf);
+        }
     }
 
     /* Slack circle and the speed line */
@@ -782,6 +1014,33 @@ static void current_draw_cb(lv_event_t * e)
     }
 
     draw_dot(layer, polar(&coords, now, current_radius(c, current_speed_at(c, now))), 6, COLOR_HAND);
+
+    /* Labels last. Scale where no event is (flood outward, ebb inward), then
+     * each maximum with its time and speed, inside its own bulge, and each
+     * slack with its time just off the slack circle. */
+    if(step > 0.0f) {
+        for(float v = step; v <= scale + 1e-3f; v += step) {
+            char buf[16];
+            current_scale_text(buf, sizeof(buf), v, step, scale);
+            draw_scale_label(layer, &coords, label_at, current_radius(c, v), buf);
+            draw_scale_label(layer, &coords, label_at, current_radius(c, -v), buf);
+        }
+    }
+    for(uint8_t i = 0; i < c->event_count; i++) {
+        const current_event_t * ev = &c->events[i];
+        char t[8], buf[24];
+        format_hhmm(t, sizeof(t), ev->minute);
+        if(ev->kind == CURRENT_SLACK) {
+            draw_tag(layer, polar(&coords, ev->minute, R_SLACK + 13.0f), t, &lv_font_montserrat_12, COLOR_SLACK);
+            continue;
+        }
+        bool flood = ev->kind == CURRENT_FLOOD;
+        int tenths = (int)lroundf(fabsf(ev->speed_kt) * 10.0f);
+        snprintf(buf, sizeof(buf), "%s\n%d.%d kt", t, tenths / 10, tenths % 10);
+        float r = current_radius(c, ev->speed_kt) + (flood ? -20.0f : 20.0f);
+        draw_tag(layer, polar(&coords, ev->minute, r), buf, &lv_font_montserrat_12,
+                 flood ? COLOR_FLOOD_DART : COLOR_EBB_DART);
+    }
 }
 
 /*********************

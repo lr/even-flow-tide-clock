@@ -35,16 +35,23 @@ more detail:
 
 | Overlay | Band                                              | Readout                 | Pressed                                |
 |---------|---------------------------------------------------|-------------------------|----------------------------------------|
-| Tide    | water level through the day                       | rising/falling, height  | next two highs and lows                |
-| Current | slack circle mid-band; flood (teal) swells outward, ebb (violet) inward; darts at each maximum point where the water goes | "Ebb 1.9 kt, 183°", next slack | next two slacks or maxima |
+| Tide    | water level through the day; each high and low labelled with time and height; rings at round heights | rising/falling, height  | next two highs and lows                |
+| Current | slack circle mid-band; flood (teal) swells outward, ebb (violet) inward; darts at each maximum point where the water goes; maxima labelled with time and speed, slacks with time; rings at round speeds | "Ebb 1.9 kt, 183°", next slack | next two slacks or maxima |
 | Sun     | night, astronomical, nautical and civil twilight, daylight | sunrise and sunset | day length, civil twilight             |
 | Moon    | when the moon is up, plus a phase disc            | phase and percent lit   | moonrise, moonset, next quarter        |
-| Weather | sky by hour, rain chance bars, red rim for storms, an icon per 3 hours, dashed red wind line (further out = stronger, 0-30 kt) with arrowheads pointing downwind every 2 hours | icon, a short outlook ("Overcast, rain in 40 min"), temperature, wind | high and low, when rain starts or stops |
+| Weather | sky by hour, rain chance bars, red rim for storms, an icon and temperature per 3 hours, dashed red wind line (further out = stronger, 0-30 kt) with arrowheads pointing downwind every 2 hours and its speed labelled every 3 hours | icon, a short outlook ("Overcast, rain in 40 min"), temperature, wind | high and low, when rain starts or stops |
 
 Under the readout, each overlay names where its data comes from: the tide
 station on the tide overlay, the current station on the current overlay, and
 the configured place on the others (or its coordinates, if it has no name).
 These differ when the nearest good station isn't at your doorstep.
+
+Tide and current bands have a scale: dashed white rings at round values (1, 2,
+2.5 or 5 times a power of ten). Each value is written in plain white in a gap
+in its own ring, like contour heights on a chart, so the scale reads
+differently from the event labels (which have a dark backing). The values
+stack straight up or straight down from the center, whichever is further from
+the day's events.
 
 Options:
 
@@ -116,9 +123,12 @@ Both come from NOAA CO-OPS predictions (free, no key), fetched once a day for
 yesterday through tomorrow so the day is bracketed at both midnights
 (`src/data/noaa.c`). A failed fetch shows no data, never invented data.
 
-The tide curve is built from high and low times alone, and the current from
-slack and maximum times (NOAA's `MAX_SLACK`), both joined with half cosines
-(`src/data/curve.c`). Most NOAA stations are subordinate stations that only
+The tide curve is built from high and low times alone, joined with half
+cosines, which are flat at the turns as the water is. The current is built
+from slack and maximum times (NOAA's `MAX_SLACK`), joined with quarter sines:
+the current changes fastest at slack and is flat at a maximum
+(`src/data/curve.c`). Against NOAA's own 6-minute predictions for the Hudson
+River Entrance this is within 0.04 kt on average, and the tests hold it there. Most NOAA stations are subordinate stations that only
 publish those events, so the one path works everywhere.
 
 Currents have their own station (`current_station_id`) and depth bin

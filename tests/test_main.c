@@ -9,9 +9,11 @@
 #include <string.h>
 #include <time.h>
 
+#include "cJSON.h"
 #include "config/config.h"
 #include "data/sky.h"
 #include "data/tide.h"
+#include "data/curve.h"
 #include "data/noaa.h"
 #include "data/weather.h"
 
@@ -247,6 +249,18 @@ static void test_tide_hilo_curve(void)
     const tide_event_t * next = tide_next_event(&day, 300.0f);
     CHECK(next != NULL && next->minute == 640.0f);
     CHECK(tide_next_event(&day, 1200.0f) == NULL);
+}
+
+static void test_nice_step(void)
+{
+    CHECK_NEAR(curve_nice_step(5.2f, 4), 2.0, 1e-6);   /* The Battery's day: rings at 0, 2, 4 ft */
+    CHECK_NEAR(curve_nice_step(4.0f, 4), 1.0, 1e-6);
+    CHECK_NEAR(curve_nice_step(1.6f, 4), 0.5, 1e-6);   /* metres */
+    CHECK_NEAR(curve_nice_step(2.5f, 3), 1.0, 1e-6);   /* a 2.5 kt current scale */
+    CHECK_NEAR(curve_nice_step(9.0f, 4), 2.5, 1e-6);
+    CHECK_NEAR(curve_nice_step(0.3f, 3), 0.1, 1e-6);
+    CHECK(curve_nice_step(0.0f, 4) == 0.0f);
+    CHECK(curve_nice_step(5.0f, 0) == 0.0f);
 }
 
 static void test_tide_unbracketed_and_empty(void)
@@ -572,6 +586,39 @@ static void test_noaa_current(void)
     CHECK(flood != NULL && flood->minute == 23 * 60 + 26);
 }
 
+/* The whole curve, not just the events, against NOAA's own 6-minute
+ * predictions for the same station and day */
+static void test_noaa_current_shape(void)
+{
+    char * json = read_fixture("noaa-current-NYH1927-bin13-20261012-14.json");
+    char * fine = read_fixture("noaa-current-NYH1927-bin13-20261013-6min.json");
+    CHECK(json != NULL && fine != NULL);
+    if(json == NULL || fine == NULL) return;
+    current_day_t day;
+    CHECK(noaa_parse_current(&day, json, 2026, 10, 13, NULL, 0));
+
+    cJSON * root = cJSON_Parse(fine);
+    const cJSON * cp = cJSON_GetObjectItem(cJSON_GetObjectItem(root, "current_predictions"), "cp");
+    const cJSON * e;
+    double sum = 0.0, worst = 0.0;
+    int n = 0;
+    cJSON_ArrayForEach(e, cp) {
+        int h, m;
+        sscanf(cJSON_GetObjectItem(e, "Time")->valuestring + 11, "%d:%d", &h, &m);
+        double d = fabs(current_speed_at(&day, (float)(h * 60 + m)) - cJSON_GetObjectItem(e, "Velocity_Major")->valuedouble);
+        sum += d;
+        if(d > worst) worst = d;
+        n++;
+    }
+    cJSON_Delete(root);
+    free(json);
+    free(fine);
+
+    CHECK(n == 240);
+    CHECK(sum / n < 0.08); /* 0.04 kt today; the half-cosine shape was 0.21 */
+    CHECK(worst < 0.25);   /* 0.17 kt today; the half-cosine shape was 0.50 */
+}
+
 static void test_noaa_urls(void)
 {
     char url[512];
@@ -637,6 +684,7 @@ int main(void)
     test_config_round_trip();
     test_tide_hilo_curve();
     test_tide_unbracketed_and_empty();
+    test_nice_step();
     test_tide_fake();
     test_sky_battery();
     test_sky_polar();
@@ -648,6 +696,7 @@ int main(void)
     test_weather_parse_errors();
     test_noaa_tide();
     test_noaa_current();
+    test_noaa_current_shape();
     test_noaa_urls();
     test_weather_url_and_compass();
 
